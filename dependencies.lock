@@ -1,8 +1,24 @@
 dependencies:
+  esp_ssd1306:
+    dependencies: []
+    source:
+      path: components/esp_ssd1306
+      type: local
+    version: 1.2.8
   idf:
     source:
       type: idf
     version: 6.1.0
+  k0i05/esp_type_utils:
+    component_hash: 95d8ec40268e045f7e264d8035f451e53844b4a2f6d5f112ece6645c5effd639
+    dependencies:
+    - name: idf
+      require: private
+      version: '>5.3.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.7
   zorxx/dht:
     component_hash: 5bac146b1e31cd739dba6e3edb791fac1052221ed2e38a30f8c575bee1e96c13
     dependencies: []
@@ -11,7 +27,10 @@ dependencies:
       type: service
     version: 1.0.2
 direct_dependencies:
+- idf
+- k0i05/esp_ssd1306
+- k0i05/esp_type_utils
 - zorxx/dht
-manifest_hash: 726453106d6f84380e89ae5a44e516aedc8b3e8ea1722978a5e91c9702d09327
+manifest_hash: a2ade63ac9afd4c1a9f634aa56f40bdd816ffe2661e85cc875fb082df9c6a785
 target: esp32
 version: 3.0.0

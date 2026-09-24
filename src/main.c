@@ -1,22 +1,28 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
+
+#include "esp_err.h"
+#include "esp_log.h"
+
 #include "dht.h"
+#include "ssd1306.h"
 
-/* =====================================================
- * DHT22 CONFIGURATION
- * ===================================================== */
+#define DHT_GPIO        GPIO_NUM_4
 
-#define DHT_GPIO GPIO_NUM_4
+#define OLED_SDA_GPIO   GPIO_NUM_21
+#define OLED_SCL_GPIO   GPIO_NUM_22
 
-/* =====================================================
- * SENSOR DATA
- * ===================================================== */
+#define I2C_PORT        I2C_NUM_0
+
+static const char *TAG = "ROOM_MONITOR";
 
 typedef struct
 {
@@ -24,27 +30,95 @@ typedef struct
     float humidity;
     int lightLevel;
     bool motionDetected;
-} SensorData;
 
-/* =====================================================
- * FREE RTOS QUEUES
- * ===================================================== */
+} SensorData;
 
 QueueHandle_t displayQueue;
 QueueHandle_t alarmQueue;
 
-/* =====================================================
- * SENSOR READING FUNCTION
- * ===================================================== */
+static i2c_master_bus_handle_t oled_i2c_bus = NULL;
 
-void readSensors(SensorData *data)
+static ssd1306_handle_t oled = NULL;
+
+static void oled_init(void)
 {
-    float temperature = 0.0;
-    float humidity = 0.0;
+    ESP_LOGI(TAG, "Initializing OLED...");
 
-    /*
-     * Read REAL values from DHT22
-     */
+    i2c_master_bus_config_t bus_config = {
+        .i2c_port = I2C_PORT,
+        .sda_io_num = OLED_SDA_GPIO,
+        .scl_io_num = OLED_SCL_GPIO,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+
+    ESP_ERROR_CHECK(
+        i2c_new_master_bus(
+            &bus_config,
+            &oled_i2c_bus
+        )
+    );
+
+   ssd1306_config_t oled_config =
+    SSD1306_128x64_CONFIG_DEFAULT;
+    ESP_ERROR_CHECK(
+        ssd1306_init(
+            oled_i2c_bus,
+            &oled_config,
+            &oled
+        )
+    );
+
+    if (oled == NULL)
+    {
+        ESP_LOGE(
+            TAG,
+            "SSD1306 initialization failed!"
+        );
+
+        return;
+    }
+
+    ssd1306_clear_display(
+        oled,
+        false
+    );
+
+    ssd1306_set_contrast(oled, 0xFF);
+
+    ssd1306_display_text(
+        oled,
+        0,
+        "ROOM MONITOR",
+        false
+    );
+
+    ssd1306_display_text(
+        oled,
+        2,
+        "Temperature",
+        false
+    );
+
+    ssd1306_display_text(
+        oled,
+        4,
+        "Starting...",
+        false
+    );
+
+    ESP_LOGI(
+        TAG,
+        "OLED initialized successfully."
+    );
+}
+
+static void readSensors(SensorData *data)
+{
+    float temperature = 0.0f;
+    float humidity = 0.0f;
+
     esp_err_t result = dht_read_float_data(
         DHT_TYPE_AM2301,
         DHT_GPIO,
@@ -59,86 +133,76 @@ void readSensors(SensorData *data)
     }
     else
     {
-        printf("ERROR: Failed to read DHT22!\n");
+        printf("DHT read failed: %s\n",
+               esp_err_to_name(result));
 
-        /*
-         * Keep previous values if reading fails.
-         * On first failure these will be 0.
-         */
+        data->temperature = 0.0f;
+        data->humidity = 0.0f;
     }
 
-    /*
-     * These are still example values.
-     * Replace them with your actual light and
-     * motion sensor readings when ready.
-     */
     data->lightLevel = 500;
+
     data->motionDetected = false;
 }
 
-/* =====================================================
- * SENSOR TASK
- * ===================================================== */
-
-void SensorTask(void *pvParameters)
+static void SensorTask(void *pvParameters)
 {
-    SensorData data = {
-        .temperature = 0.0,
-        .humidity = 0.0,
-        .lightLevel = 500,
-        .motionDetected = false
-    };
+    SensorData data;
 
-    TickType_t lastWakeTime = xTaskGetTickCount();
+    TickType_t lastWakeTime =
+        xTaskGetTickCount();
 
-    for (;;)
+    while (1)
     {
-        /*
-         * Read sensors
-         */
+        printf("\n");
+        printf("SensorTask: Reading sensors...\n");
+
         readSensors(&data);
 
-        printf("\nSensorTask: Reading sensors...\n");
+        printf(
+            "Temperature: %.2f C\n",
+            data.temperature
+        );
 
-        printf("Temperature: %.2f C\n",
-               data.temperature);
+        printf(
+            "Humidity: %.2f %%\n",
+            data.humidity
+        );
 
-        printf("Humidity: %.2f %%\n",
-               data.humidity);
+        printf(
+            "Light Level: %d\n",
+            data.lightLevel
+        );
 
-        printf("Light Level: %d\n",
-               data.lightLevel);
+        printf(
+            "Motion: %s\n",
+            data.motionDetected
+                ? "DETECTED"
+                : "NOT DETECTED"
+        );
 
-        printf("Motion: %s\n",
-               data.motionDetected
-                   ? "DETECTED"
-                   : "NOT DETECTED");
-
-        /*
-         * Send sensor data to DisplayTask
-         */
         if (xQueueSend(
                 displayQueue,
                 &data,
-                portMAX_DELAY) != pdPASS)
+                pdMS_TO_TICKS(100)
+            ) != pdPASS)
         {
-            printf("ERROR: Failed to send to display queue!\n");
+            printf(
+                "WARNING: Display queue full!\n"
+            );
         }
 
-        /*
-         * Send sensor data to AlarmTask
-         */
         if (xQueueSend(
                 alarmQueue,
                 &data,
-                portMAX_DELAY) != pdPASS)
+                pdMS_TO_TICKS(100)
+            ) != pdPASS)
         {
-            printf("ERROR: Failed to send to alarm queue!\n");
+            printf(
+                "WARNING: Alarm queue full!\n"
+            );
         }
 
-        /*
-         * Run every 2 seconds
-         */
         vTaskDelayUntil(
             &lastWakeTime,
             pdMS_TO_TICKS(2000)
@@ -146,78 +210,115 @@ void SensorTask(void *pvParameters)
     }
 }
 
-/* =====================================================
- * DISPLAY TASK
- * ===================================================== */
-
-void DisplayTask(void *pvParameters)
+static void DisplayTask(void *pvParameters)
 {
     SensorData data;
 
-    for (;;)
+    while (1)
     {
         if (xQueueReceive(
                 displayQueue,
                 &data,
-                portMAX_DELAY))
+                portMAX_DELAY
+            ) == pdPASS)
         {
-            printf("\n----- DISPLAY -----\n");
+            char temperatureText[20];
 
-            printf("Temperature: %.2f C\n",
-                   data.temperature);
+            snprintf(
+                temperatureText,
+                sizeof(temperatureText),
+                "%.1f C",
+                data.temperature
+            );
 
-            printf("Humidity: %.2f %%\n",
-                   data.humidity);
+            ssd1306_clear_display(
+                oled,
+                false
+            );
 
-            printf("Light Level: %d\n",
-                   data.lightLevel);
+            ssd1306_display_text(
+                oled,
+                0,
+                "ROOM MONITOR",
+                false
+            );
 
-            printf("Motion: %s\n",
-                   data.motionDetected
-                       ? "DETECTED"
-                       : "NOT DETECTED");
+            ssd1306_display_text(
+                oled,
+                2,
+                "Temperature",
+                false
+            );
+
+            ssd1306_display_text(
+                oled,
+                4,
+                temperatureText,
+                false
+            );
+
+            printf("\n");
+            printf("----- DISPLAY -----\n");
+
+            printf(
+                "Temperature: %.2f C\n",
+                data.temperature
+            );
+
+            printf(
+                "Humidity: %.2f %%\n",
+                data.humidity
+            );
+
+            printf(
+                "Light Level: %d\n",
+                data.lightLevel
+            );
+
+            printf(
+                "Motion: %s\n",
+                data.motionDetected
+                    ? "DETECTED"
+                    : "NOT DETECTED"
+            );
 
             printf("-------------------\n");
         }
     }
 }
 
-/* =====================================================
- * ALARM TASK
- * ===================================================== */
-
-void AlarmTask(void *pvParameters)
+static void AlarmTask(void *pvParameters)
 {
     SensorData data;
 
-    for (;;)
+    while (1)
     {
         if (xQueueReceive(
                 alarmQueue,
                 &data,
-                portMAX_DELAY))
+                portMAX_DELAY
+            ) == pdPASS)
         {
-            /*
-             * Alarm condition:
-             * Motion detected AND low light
-             */
-            if (data.motionDetected &&
-                data.lightLevel < 100)
+            if (
+                data.motionDetected &&
+                data.lightLevel < 100
+            )
             {
-                printf("\n!!! ALARM !!!\n");
-                printf("Motion detected in darkness!\n");
+                printf("\n");
+                printf("!!! ALARM !!!\n");
+                printf(
+                    "Motion detected in darkness!\n"
+                );
             }
             else
             {
-                printf("Alarm: NORMAL\n");
+                printf(
+                    "Alarm: NORMAL\n"
+                );
             }
         }
     }
 }
-
-/* =====================================================
- * MAIN
- * ===================================================== */
 
 void app_main(void)
 {
@@ -226,78 +327,71 @@ void app_main(void)
     printf(" ESP32 FREERTOS SENSOR SYSTEM\n");
     printf("================================\n");
 
-    /*
-     * Create Display Queue
-     */
     displayQueue = xQueueCreate(
         10,
         sizeof(SensorData)
     );
 
-    /*
-     * Create Alarm Queue
-     */
     alarmQueue = xQueueCreate(
         10,
         sizeof(SensorData)
     );
 
-    /*
-     * Check queues
-     */
-    if (displayQueue == NULL ||
-        alarmQueue == NULL)
+    if (
+        displayQueue == NULL ||
+        alarmQueue == NULL
+    )
     {
-        printf("ERROR: Queue creation failed!\n");
+        printf(
+            "ERROR: Queue creation failed!\n"
+        );
+
         return;
     }
 
-    printf("Queues created successfully.\n");
+    printf(
+        "Queues created successfully.\n"
+    );
 
-    /*
-     * Create Sensor Task
-     */
-    if (xTaskCreate(
-            SensorTask,
-            "SensorTask",
-            4096,
-            NULL,
-            2,
-            NULL) != pdPASS)
+    oled_init();
+
+    if (oled == NULL)
     {
-        printf("ERROR: SensorTask creation failed!\n");
+        printf(
+            "ERROR: OLED initialization failed!\n"
+        );
+
         return;
     }
 
-    /*
-     * Create Display Task
-     */
-    if (xTaskCreate(
-            DisplayTask,
-            "DisplayTask",
-            4096,
-            NULL,
-            1,
-            NULL) != pdPASS)
-    {
-        printf("ERROR: DisplayTask creation failed!\n");
-        return;
-    }
+    xTaskCreate(
+        SensorTask,
+        "SensorTask",
+        4096,
+        NULL,
+        5,
+        NULL
+    );
 
-    /*
-     * Create Alarm Task
-     */
-    if (xTaskCreate(
-            AlarmTask,
-            "AlarmTask",
-            4096,
-            NULL,
-            1,
-            NULL) != pdPASS)
-    {
-        printf("ERROR: AlarmTask creation failed!\n");
-        return;
-    }
+    xTaskCreate(
+        DisplayTask,
+        "DisplayTask",
+        4096,
+        NULL,
+        4,
+        NULL
+    );
 
-    printf("All tasks started successfully.\n");
+    xTaskCreate(
+        AlarmTask,
+        "AlarmTask",
+        4096,
+        NULL,
+        4,
+        NULL
+    );
+
+    printf(
+        "All tasks started successfully.\n"
+    );
 }
