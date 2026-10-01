@@ -5,216 +5,123 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-
 #include "driver/gpio.h"
+#include "driver/i2c.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
-
-/* =========================================================
- * Pin Configuration
- * ========================================================= */
+#include "ssd1306.h"
 
 #define DHT_PIN GPIO_NUM_4
-
-/* ESP32 GPIO34 = ADC1 Channel 6 */
 #define LDR_ADC_CHANNEL ADC_CHANNEL_6
 
-
-/* =========================================================
- * Global Variables
- * ========================================================= */
+#define I2C_MASTER_NUM I2C_NUM_0
+#define I2C_MASTER_SDA_IO GPIO_NUM_21
+#define I2C_MASTER_SCL_IO GPIO_NUM_22
+#define I2C_MASTER_FREQ_HZ 100000
+#define OLED_I2C_ADDRESS 0x3C
 
 static const char *TAG = "SENSOR";
 
 static adc_oneshot_unit_handle_t adc_handle;
-
-/* Two queues so both consumers receive the sensor data */
 static QueueHandle_t displayQueue;
 static QueueHandle_t alarmQueue;
+static ssd1306_handle_t oled;
 
-
-/* =========================================================
- * Sensor Data Structure
- * ========================================================= */
-
-typedef struct
-{
+typedef struct {
     float temperature;
     float humidity;
     int lightLevel;
     bool motionDetected;
-
 } SensorData;
-
-
-/* =========================================================
- * DHT22 Sensor Reading
- * ========================================================= */
 
 static bool dht22_read(float *temperature, float *humidity)
 {
     uint8_t data[5] = {0};
 
-    /* Start signal */
     gpio_set_direction(DHT_PIN, GPIO_MODE_OUTPUT);
-
     gpio_set_level(DHT_PIN, 0);
-
-    /* DHT22 requires at least 1 ms LOW */
     esp_rom_delay_us(20000);
 
     gpio_set_level(DHT_PIN, 1);
-
     esp_rom_delay_us(30);
-
     gpio_set_direction(DHT_PIN, GPIO_MODE_INPUT);
-
-
-    /* Wait for DHT22 response */
 
     int timeout = 100;
 
     while (gpio_get_level(DHT_PIN) == 1 && timeout--)
-    {
         esp_rom_delay_us(1);
-    }
 
     timeout = 100;
 
     while (gpio_get_level(DHT_PIN) == 0 && timeout--)
-    {
         esp_rom_delay_us(1);
-    }
 
     timeout = 100;
 
     while (gpio_get_level(DHT_PIN) == 1 && timeout--)
-    {
         esp_rom_delay_us(1);
-    }
 
     if (timeout <= 0)
-    {
         return false;
-    }
 
-
-    /* Read 40 bits */
-
-    for (int i = 0; i < 40; i++)
-    {
+    for (int i = 0; i < 40; i++) {
         timeout = 100;
 
         while (gpio_get_level(DHT_PIN) == 0 && timeout--)
-        {
             esp_rom_delay_us(1);
-        }
 
         if (timeout <= 0)
-        {
             return false;
-        }
-
-        /*
-         * DHT22 uses pulse width to represent
-         * 0 or 1.
-         */
 
         esp_rom_delay_us(40);
 
         if (gpio_get_level(DHT_PIN))
-        {
-            data[i / 8] |=
-                (1 << (7 - (i % 8)));
-        }
+            data[i / 8] |= (1 << (7 - (i % 8)));
 
         timeout = 100;
 
         while (gpio_get_level(DHT_PIN) == 1 && timeout--)
-        {
             esp_rom_delay_us(1);
-        }
 
         if (timeout <= 0)
-        {
             return false;
-        }
     }
 
+    uint8_t checksum = data[0] + data[1] + data[2] + data[3];
 
-    /* Checksum */
-
-    uint8_t checksum =
-        data[0] +
-        data[1] +
-        data[2] +
-        data[3];
-
-    if (checksum != data[4])
-    {
-        ESP_LOGE(
-            TAG,
-            "DHT22 checksum error"
-        );
-
+    if (checksum != data[4]) {
+        ESP_LOGE(TAG, "DHT22 checksum error");
         return false;
     }
 
-
-    /* Humidity */
-
-    *humidity =
-        ((data[0] << 8) | data[1]) / 10.0f;
-
-
-    /* Temperature */
+    *humidity = ((data[0] << 8) | data[1]) / 10.0f;
 
     int16_t raw_temperature =
-        ((data[2] & 0x7F) << 8) |
-        data[3];
+        ((data[2] & 0x7F) << 8) | data[3];
 
-    *temperature =
-        raw_temperature / 10.0f;
-
-
-    /* Negative temperature */
+    *temperature = raw_temperature / 10.0f;
 
     if (data[2] & 0x80)
-    {
-        *temperature =
-            -*temperature;
-    }
+        *temperature = -*temperature;
 
     return true;
 }
 
-
-/* =========================================================
- * LDR ADC Initialization
- * ========================================================= */
-
 static void ldr_init(void)
 {
-    adc_oneshot_unit_init_cfg_t init_config =
-    {
-        .unit_id = ADC_UNIT_1,
+    adc_oneshot_unit_init_cfg_t init_config = {
+        .unit_id = ADC_UNIT_1
     };
 
     ESP_ERROR_CHECK(
-        adc_oneshot_new_unit(
-            &init_config,
-            &adc_handle
-        )
+        adc_oneshot_new_unit(&init_config, &adc_handle)
     );
 
-
-    adc_oneshot_chan_cfg_t config =
-    {
+    adc_oneshot_chan_cfg_t config = {
         .atten = ADC_ATTEN_DB_12,
-        .bitwidth = ADC_BITWIDTH_12,
+        .bitwidth = ADC_BITWIDTH_12
     };
-
 
     ESP_ERROR_CHECK(
         adc_oneshot_config_channel(
@@ -224,22 +131,12 @@ static void ldr_init(void)
         )
     );
 
-
-    ESP_LOGI(
-        TAG,
-        "LDR ADC initialized"
-    );
+    ESP_LOGI(TAG, "LDR ADC initialized");
 }
-
-
-/* =========================================================
- * LDR Measurement
- * ========================================================= */
 
 static int ldr_read_percent(void)
 {
     int raw_value = 0;
-
 
     ESP_ERROR_CHECK(
         adc_oneshot_read(
@@ -249,93 +146,85 @@ static int ldr_read_percent(void)
         )
     );
 
-
-    /*
-     * ESP32 ADC is 12-bit:
-     *
-     * 0    = minimum
-     * 4095 = maximum
-     *
-     * Convert to 0-100%.
-     */
-
-    int percent =
-        (raw_value * 100) / 4095;
-
+    int percent = (raw_value * 100) / 4095;
 
     if (percent < 0)
-    {
         percent = 0;
-    }
-
 
     if (percent > 100)
-    {
         percent = 100;
-    }
-
-
-    ESP_LOGI(
-        TAG,
-        "LDR Raw: %d",
-        raw_value
-    );
-
 
     return percent;
 }
 
+static void oled_init(void)
+{
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+        .clk_flags = 0
+    };
 
-/* =========================================================
- * Sensor Acquisition
- * ========================================================= */
+    ESP_ERROR_CHECK(
+        i2c_param_config(I2C_MASTER_NUM, &conf)
+    );
+
+    ESP_ERROR_CHECK(
+        i2c_driver_install(
+            I2C_MASTER_NUM,
+            conf.mode,
+            0,
+            0,
+            0
+        )
+    );
+
+    oled = ssd1306_create(
+        I2C_MASTER_NUM,
+        OLED_I2C_ADDRESS
+    );
+
+    if (oled == NULL) {
+        ESP_LOGE(TAG, "Failed to create SSD1306");
+        return;
+    }
+
+    ssd1306_clear_screen(oled, 0x00);
+    ssd1306_refresh_gram(oled);
+
+    ESP_LOGI(TAG, "OLED initialized");
+}
 
 static SensorData readSensors(void)
 {
-    SensorData data =
-    {
+    SensorData data = {
         .temperature = 0.0f,
         .humidity = 0.0f,
         .lightLevel = 0,
         .motionDetected = false
     };
 
+    data.lightLevel = ldr_read_percent();
 
-    /* Read LDR */
-
-    data.lightLevel =
-        ldr_read_percent();
-
-
-    /* Read DHT22 */
-
-    if (dht22_read(
-            &data.temperature,
-            &data.humidity))
-    {
+    if (dht22_read(&data.temperature, &data.humidity)) {
         ESP_LOGI(
             TAG,
             "Temperature: %.2f C",
             data.temperature
         );
 
-
         ESP_LOGI(
             TAG,
             "Humidity: %.2f %%",
             data.humidity
         );
+    } else {
+        ESP_LOGE(TAG, "DHT22 read failed");
     }
-    else
-    {
-        ESP_LOGE(
-            TAG,
-            "DHT22 read failed"
-        );
-    }
-
-
-    /* LDR result */
 
     ESP_LOGI(
         TAG,
@@ -343,99 +232,28 @@ static SensorData readSensors(void)
         data.lightLevel
     );
 
-
-    /*
-     * PIR has not been implemented yet.
-     * Motion remains false until PIR is added.
-     */
-
-    data.motionDetected = false;
-
-
     return data;
 }
 
-
-/* =========================================================
- * Sensor Task
- * ========================================================= */
-
 static void SensorTask(void *pvParameters)
 {
-    /*
-     * Save the initial execution time.
-     * vTaskDelayUntil() uses this as the
-     * reference point for periodic execution.
-     */
+    TickType_t lastWakeTime = xTaskGetTickCount();
+    SensorData data;
 
-    TickType_t lastWakeTime =
-        xTaskGetTickCount();
+    for (;;) {
+        data = readSensors();
 
+        xQueueSend(
+            displayQueue,
+            &data,
+            pdMS_TO_TICKS(100)
+        );
 
-    SensorData sensorData;
-
-
-    for (;;)
-    {
-        /* Acquire sensor data */
-
-        sensorData =
-            readSensors();
-
-
-        /*
-         * Send the SAME SensorData to the
-         * Display Queue.
-         */
-
-        if (xQueueSend(
-                displayQueue,
-                &sensorData,
-                pdMS_TO_TICKS(100)
-            ) != pdPASS)
-        {
-            ESP_LOGW(
-                TAG,
-                "Display queue full"
-            );
-        }
-        else
-        {
-            ESP_LOGI(
-                TAG,
-                "Data sent to Display Queue"
-            );
-        }
-
-
-        /*
-         * Send the SAME SensorData to the
-         * Alarm Queue.
-         */
-
-        if (xQueueSend(
-                alarmQueue,
-                &sensorData,
-                pdMS_TO_TICKS(100)
-            ) != pdPASS)
-        {
-            ESP_LOGW(
-                TAG,
-                "Alarm queue full"
-            );
-        }
-        else
-        {
-            ESP_LOGI(
-                TAG,
-                "Data sent to Alarm Queue"
-            );
-        }
-
-
-        /*
-         * Execute every 2 seconds.
-         */
+        xQueueSend(
+            alarmQueue,
+            &data,
+            pdMS_TO_TICKS(100)
+        );
 
         vTaskDelayUntil(
             &lastWakeTime,
@@ -444,29 +262,17 @@ static void SensorTask(void *pvParameters)
     }
 }
 
-
-/* =========================================================
- * Display Task
- * ========================================================= */
-
 static void DisplayTask(void *pvParameters)
 {
     SensorData data;
 
-
-    for (;;)
-    {
-        /*
-         * Wait for sensor data from
-         * the Display Queue.
-         */
-
+    for (;;) {
         if (xQueueReceive(
                 displayQueue,
                 &data,
                 portMAX_DELAY
-            ) == pdTRUE)
-        {
+            ) == pdTRUE) {
+
             ESP_LOGI(
                 TAG,
                 "DISPLAY -> Temp: %.2f C | Humidity: %.2f %% | Light: %d %% | Motion: %s",
@@ -475,47 +281,69 @@ static void DisplayTask(void *pvParameters)
                 data.lightLevel,
                 data.motionDetected ? "YES" : "NO"
             );
+
+            if (oled != NULL) {
+                char temp[20];
+
+                snprintf(
+                    temp,
+                    sizeof(temp),
+                    "%.1f C",
+                    data.temperature
+                );
+
+                ssd1306_clear_screen(oled, 0x00);
+
+                ssd1306_draw_string(
+                    oled,
+                    0,
+                    0,
+                    (const uint8_t *)"ROOM MONITOR",
+                    16,
+                    1
+                );
+
+                ssd1306_draw_string(
+                    oled,
+                    0,
+                    24,
+                    (const uint8_t *)"Temperature",
+                    16,
+                    1
+                );
+
+                ssd1306_draw_string(
+                    oled,
+                    0,
+                    40,
+                    (const uint8_t *)temp,
+                    16,
+                    1
+                );
+
+                ssd1306_refresh_gram(oled);
+            }
         }
     }
 }
-
-
-/* =========================================================
- * Alarm Task
- * ========================================================= */
 
 static void AlarmTask(void *pvParameters)
 {
     SensorData data;
 
-
-    for (;;)
-    {
-        /*
-         * Wait for sensor data from
-         * the Alarm Queue.
-         */
-
+    for (;;) {
         if (xQueueReceive(
                 alarmQueue,
                 &data,
                 portMAX_DELAY
-            ) == pdTRUE)
-        {
-            /*
-             * Motion alarm will be implemented
-             * when the PIR sensor is added.
-             */
+            ) == pdTRUE) {
 
-            if (data.motionDetected)
-            {
+            if (data.motionDetected) {
                 ESP_LOGW(
                     TAG,
                     "ALARM -> Motion detected!"
                 );
-            }
-            else
-            {
+            } else {
                 ESP_LOGI(
                     TAG,
                     "ALARM -> No motion"
@@ -525,11 +353,6 @@ static void AlarmTask(void *pvParameters)
     }
 }
 
-
-/* =========================================================
- * Application Entry Point
- * ========================================================= */
-
 void app_main(void)
 {
     ESP_LOGI(
@@ -537,45 +360,27 @@ void app_main(void)
         "BCA152 FreeRTOS Multisensor"
     );
 
-
     ESP_LOGI(
         TAG,
         "System starting..."
     );
 
-
-    /* Initialize LDR */
-
     ldr_init();
+    oled_init();
 
+    displayQueue = xQueueCreate(
+        5,
+        sizeof(SensorData)
+    );
 
-    /* =====================================================
-     * Create Display Queue
-     * ===================================================== */
-
-    displayQueue =
-        xQueueCreate(
-            5,
-            sizeof(SensorData)
-        );
-
-
-    /* =====================================================
-     * Create Alarm Queue
-     * ===================================================== */
-
-    alarmQueue =
-        xQueueCreate(
-            5,
-            sizeof(SensorData)
-        );
-
-
-    /* Check queues */
+    alarmQueue = xQueueCreate(
+        5,
+        sizeof(SensorData)
+    );
 
     if (displayQueue == NULL ||
-        alarmQueue == NULL)
-    {
+        alarmQueue == NULL) {
+
         ESP_LOGE(
             TAG,
             "Failed to create sensor queues"
@@ -584,111 +389,35 @@ void app_main(void)
         return;
     }
 
-
-    ESP_LOGI(
-        TAG,
-        "Display queue created"
+    xTaskCreate(
+        SensorTask,
+        "SensorTask",
+        4096,
+        NULL,
+        1,
+        NULL
     );
 
-
-    ESP_LOGI(
-        TAG,
-        "Alarm queue created"
+    xTaskCreate(
+        DisplayTask,
+        "DisplayTask",
+        4096,
+        NULL,
+        1,
+        NULL
     );
 
-
-    /* =====================================================
-     * Create SensorTask
-     * ===================================================== */
-
-    BaseType_t taskResult =
-        xTaskCreate(
-            SensorTask,
-            "SensorTask",
-            4096,
-            NULL,
-            1,
-            NULL
-        );
-
-
-    if (taskResult != pdPASS)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to create SensorTask"
-        );
-
-        return;
-    }
-
-
-    ESP_LOGI(
-        TAG,
-        "SensorTask created"
+    xTaskCreate(
+        AlarmTask,
+        "AlarmTask",
+        4096,
+        NULL,
+        1,
+        NULL
     );
 
-
-    /* =====================================================
-     * Create DisplayTask
-     * ===================================================== */
-
-    taskResult =
-        xTaskCreate(
-            DisplayTask,
-            "DisplayTask",
-            4096,
-            NULL,
-            1,
-            NULL
-        );
-
-
-    if (taskResult != pdPASS)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to create DisplayTask"
-        );
-
-        return;
-    }
-
-
     ESP_LOGI(
         TAG,
-        "DisplayTask created"
-    );
-
-
-    /* =====================================================
-     * Create AlarmTask
-     * ===================================================== */
-
-    taskResult =
-        xTaskCreate(
-            AlarmTask,
-            "AlarmTask",
-            4096,
-            NULL,
-            1,
-            NULL
-        );
-
-
-    if (taskResult != pdPASS)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to create AlarmTask"
-        );
-
-        return;
-    }
-
-
-    ESP_LOGI(
-        TAG,
-        "AlarmTask created"
+        "All tasks created"
     );
 }
