@@ -4,14 +4,24 @@
   "editor": "wokwi",
   "parts": [
     { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
-    { "type": "wokwi-dht22", "id": "dht1", "top": -95.7, "left": 129, "attrs": {} }
+    { "type": "wokwi-dht22", "id": "dht1", "top": -95.7, "left": 129, "attrs": {} },
+    {
+      "type": "wokwi-photoresistor-sensor",
+      "id": "ldr1",
+      "top": 22.4,
+      "left": -191.2,
+      "attrs": {}
+    }
   ],
   "connections": [
     [ "esp:TX", "$serialMonitor:RX", "", [] ],
     [ "esp:RX", "$serialMonitor:TX", "", [] ],
     [ "dht1:VCC", "esp:3V3", "red", [ "v0", "h-28.8", "v-28.8", "h-115.2" ] ],
     [ "dht1:SDA", "esp:4", "green", [ "v124.8", "h-47.9" ] ],
-    [ "dht1:GND", "esp:GND.2", "black", [ "v9.6", "h-76.8" ] ]
+    [ "dht1:GND", "esp:GND.2", "black", [ "v9.6", "h-76.8" ] ],
+    [ "esp:3V3", "ldr1:VCC", "red", [ "h-23.81", "v0" ] ],
+    [ "ldr1:GND", "esp:GND.1", "black", [ "h9.6", "v105.2" ] ],
+    [ "ldr1:AO", "esp:34", "green", [ "h19.2", "v-0.7" ] ]
   ],
   "dependencies": {}
 }
