@@ -48,7 +48,8 @@ AlarmState evaluateTemperature(float temperature)
 void readSensors(SensorData *data)
 {
     float temperature = 0.0f, humidity = 0.0f;
-    esp_err_t result = dht_read_float_data(DHT_TYPE_AM2301, DHT_PIN, &humidity, &temperature);
+    esp_err_t result = dht_read_float_data(
+        DHT_TYPE_AM2301, DHT_PIN, &humidity, &temperature);
 
     if (result == ESP_OK) {
         data->temperature = temperature;
@@ -92,35 +93,45 @@ void DisplayTask(void *pvParameters)
 
     for (;;) {
         if (xQueueReceive(displayQueue, &sensorData, portMAX_DELAY) == pdTRUE) {
-            if (systemState == SystemState::INACTIVE)
-                continue;
+            if (systemState == SystemState::INACTIVE) continue;
 
             char line[32];
             ssd1306_clear_screen(oled, 0x00);
 
             switch (currentMode) {
                 case DisplayMode::TEMPERATURE:
-                    ssd1306_draw_string(oled, 0, 0, (const uint8_t *)"TEMPERATURE", 16, 1);
-                    snprintf(line, sizeof(line), "%.1f C", sensorData.temperature);
-                    ssd1306_draw_string(oled, 0, 24, (const uint8_t *)line, 16, 1);
+                    ssd1306_draw_string(oled, 0, 0,
+                        (const uint8_t *)"TEMPERATURE", 16, 1);
+                    snprintf(line, sizeof(line), "%.1f C",
+                        sensorData.temperature);
+                    ssd1306_draw_string(oled, 0, 24,
+                        (const uint8_t *)line, 16, 1);
                     break;
 
                 case DisplayMode::HUMIDITY:
-                    ssd1306_draw_string(oled, 0, 0, (const uint8_t *)"HUMIDITY", 16, 1);
-                    snprintf(line, sizeof(line), "%.1f%%", sensorData.humidity);
-                    ssd1306_draw_string(oled, 0, 24, (const uint8_t *)line, 16, 1);
+                    ssd1306_draw_string(oled, 0, 0,
+                        (const uint8_t *)"HUMIDITY", 16, 1);
+                    snprintf(line, sizeof(line), "%.1f%%",
+                        sensorData.humidity);
+                    ssd1306_draw_string(oled, 0, 24,
+                        (const uint8_t *)line, 16, 1);
                     break;
 
                 case DisplayMode::LIGHT:
-                    ssd1306_draw_string(oled, 0, 0, (const uint8_t *)"LIGHT", 16, 1);
-                    snprintf(line, sizeof(line), "%d%%", sensorData.lightLevel);
-                    ssd1306_draw_string(oled, 0, 24, (const uint8_t *)line, 16, 1);
+                    ssd1306_draw_string(oled, 0, 0,
+                        (const uint8_t *)"LIGHT", 16, 1);
+                    snprintf(line, sizeof(line), "%d%%",
+                        sensorData.lightLevel);
+                    ssd1306_draw_string(oled, 0, 24,
+                        (const uint8_t *)line, 16, 1);
                     break;
 
                 case DisplayMode::MOTION:
-                    ssd1306_draw_string(oled, 0, 0, (const uint8_t *)"MOTION", 16, 1);
+                    ssd1306_draw_string(oled, 0, 0,
+                        (const uint8_t *)"MOTION", 16, 1);
                     ssd1306_draw_string(oled, 0, 24,
-                        (const uint8_t *)(sensorData.motionDetected ? "DETECTED" : "NO MOTION"), 16, 1);
+                        (const uint8_t *)(sensorData.motionDetected
+                            ? "DETECTED" : "NO MOTION"), 16, 1);
                     break;
             }
 
@@ -135,12 +146,11 @@ void AlarmTask(void *pvParameters)
 
     for (;;) {
         if (xQueueReceive(alarmQueue, &sensorData, portMAX_DELAY) == pdTRUE) {
-            if (systemState == SystemState::INACTIVE)
-                continue;
+            if (systemState == SystemState::INACTIVE) continue;
 
             AlarmState state = evaluateTemperature(sensorData.temperature);
-
-            printf("Alarm Data: Temperature %.2f C\n", sensorData.temperature);
+            printf("Alarm Data: Temperature %.2f C\n",
+                sensorData.temperature);
 
             switch (state) {
                 case AlarmState::NORMAL:
@@ -171,17 +181,19 @@ void InputTask(void *pvParameters)
         int currentDT = gpio_get_level(ENCODER_DT);
 
         if (currentCLK != lastCLK && currentCLK == 1) {
+            int mode;
+
             if (currentDT == 0) {
-                int mode = static_cast<int>(currentMode) + 1;
+                mode = static_cast<int>(currentMode) + 1;
                 if (mode > static_cast<int>(DisplayMode::MOTION))
                     mode = static_cast<int>(DisplayMode::TEMPERATURE);
-                currentMode = static_cast<DisplayMode>(mode);
             } else {
-                int mode = static_cast<int>(currentMode) - 1;
+                mode = static_cast<int>(currentMode) - 1;
                 if (mode < static_cast<int>(DisplayMode::TEMPERATURE))
                     mode = static_cast<int>(DisplayMode::MOTION);
-                currentMode = static_cast<DisplayMode>(mode);
             }
+
+            currentMode = static_cast<DisplayMode>(mode);
         }
 
         lastCLK = currentCLK;
@@ -204,7 +216,6 @@ void MotionTask(void *pvParameters)
                 printf("Motion detected - ACTIVE\n");
                 systemState = SystemState::ACTIVE;
                 motionActive = true;
-                ssd1306_refresh_gram(oled);
             }
         } else {
             if (motionActive) {
@@ -213,11 +224,11 @@ void MotionTask(void *pvParameters)
             }
 
             if (systemState == SystemState::ACTIVE &&
-                (xTaskGetTickCount() - lastMotionTime) >= pdMS_TO_TICKS(15000)) {
+                (xTaskGetTickCount() - lastMotionTime) >=
+                pdMS_TO_TICKS(15000)) {
 
                 printf("No motion for 15 seconds - INACTIVE\n");
                 systemState = SystemState::INACTIVE;
-
                 ssd1306_clear_screen(oled, 0x00);
                 ssd1306_refresh_gram(oled);
             }
@@ -258,11 +269,9 @@ extern "C" void app_main(void)
     adc_oneshot_chan_cfg_t adc_channel_config = {};
     adc_channel_config.atten = ADC_ATTEN_DB_12;
     adc_channel_config.bitwidth = ADC_BITWIDTH_DEFAULT;
+
     adc_oneshot_config_channel(
-        adc_handle,
-        LDR_ADC_CHANNEL,
-        &adc_channel_config
-    );
+        adc_handle, LDR_ADC_CHANNEL, &adc_channel_config);
 
     i2c_config_t i2c_config = {};
     i2c_config.mode = I2C_MODE_MASTER;
@@ -274,13 +283,7 @@ extern "C" void app_main(void)
     i2c_config.clk_flags = 0;
 
     i2c_param_config(I2C_MASTER_NUM, &i2c_config);
-    i2c_driver_install(
-        I2C_MASTER_NUM,
-        i2c_config.mode,
-        0,
-        0,
-        0
-    );
+    i2c_driver_install(I2C_MASTER_NUM, i2c_config.mode, 0, 0, 0);
 
     oled = ssd1306_create(I2C_MASTER_NUM, OLED_ADDRESS);
 
