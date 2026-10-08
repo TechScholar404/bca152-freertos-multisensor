@@ -8,7 +8,7 @@
     {
       "type": "wokwi-photoresistor-sensor",
       "id": "ldr1",
-      "top": 22.4,
+      "top": 12.8,
       "left": -191.2,
       "attrs": {}
     },
@@ -18,6 +18,14 @@
       "top": 175.94,
       "left": 134.63,
       "attrs": { "i2cAddress": "0x3c" }
+    },
+    { "type": "wokwi-ky-040", "id": "encoder1", "top": 155.3, "left": -154.4, "attrs": {} },
+    {
+      "type": "wokwi-pir-motion-sensor",
+      "id": "pir1",
+      "top": -111.2,
+      "left": -112.98,
+      "attrs": {}
     }
   ],
   "connections": [
@@ -32,7 +40,20 @@
     [ "oled1:SDA", "esp:21", "green", [ "v-105.6", "h-105.53" ] ],
     [ "oled1:SCL", "esp:22", "green", [ "v-134.4", "h-95.7" ] ],
     [ "esp:GND.3", "oled1:GND", "black", [ "h0" ] ],
-    [ "oled1:VCC", "esp:3V3", "red", [ "v-144", "h-47.85", "v0", "h-28.8", "v-57.6", "h-105.6" ] ]
+    [ "oled1:VCC", "esp:3V3", "red", [ "v-144", "h-47.85", "v0", "h-28.8", "v-57.6", "h-105.6" ] ],
+    [ "encoder1:CLK", "esp:18", "green", [ "h28.8", "v57.6", "h124.8", "v-115.2" ] ],
+    [ "encoder1:DT", "esp:19", "gold", [ "h19.2", "v57.7", "h0", "v0", "h144", "v-134.4" ] ],
+    [
+      "encoder1:SW",
+      "esp:23",
+      "orange",
+      [ "h9.6", "v96.1", "h153.6", "v-172.8", "h0", "v-67.2" ]
+    ],
+    [ "encoder1:VCC", "esp:3V3", "red", [ "h28.8", "v0.4", "h0", "v-182.4" ] ],
+    [ "encoder1:GND", "esp:GND.1", "black", [ "h28.8", "v0.8", "h0", "v-48" ] ],
+    [ "pir1:GND", "esp:GND.1", "black", [ "v19.2", "h47.74", "v153.6" ] ],
+    [ "pir1:VCC", "esp:3V3", "red", [ "v19.2", "h76.8" ] ],
+    [ "pir1:OUT", "esp:27", "green", [ "v19.2", "h57.46", "v124.8" ] ]
   ],
   "dependencies": {}
 }
